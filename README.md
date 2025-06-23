@@ -1,1 +1,1 @@
-Public lemmatizers scripts from my work with the Lexeis Project over Summer 2025
+Public lemmatizer, XML tagging, and HTML parsing scripts from my work with the Lexeis Project over Summer 2025
