@@ -32,10 +32,11 @@ while i < len(relevant):
                 para = re.sub("<[^>]*>", "", str(para))
                 # processing punctuation
                 para = para.replace("]‑", "] ‑")
-                para = para.replace(".", " .")
-                para = para.replace(";", " ;")
-                para = para.replace(",", " ,")
-                para = para.replace("·", " ·")
+                para = para.replace(".", " . ")
+                para = para.replace(";", " ; ")
+                para = para.replace(",", " , ")
+                para = para.replace("·", " · ")
+                para = para.replace("\"", "")
                 for ele in para.split():
                     out_list.append(ele)
             k += 1
@@ -55,102 +56,115 @@ headers = [
     "ΑΞΙΟΧΟΣ ΣΩΚΡΑΤΗΣ ΚΛΕΙΝΙΑΣ ΑΞΙΟΧΟΣ"
 ]
 
+eng_headers = [
+    "Axiochus",
+    "DeIusto",
+    "DeVirtute",
+    "Demodocus",
+    "Sisyphus",
+    "Eryxias"
+]
+
 # process headers
 
-i = 0
-for sec in splitted_sections:
-    sec.insert(0, headers[i])
-    i += 1
+# i = 0
+# for sec in splitted_sections:
+#     sec.insert(0, headers[i])
+#     i += 1
 
 splitted_sections.insert(0, splitted_sections.pop())
+headers.insert(0, headers.pop())
 
-xml_string = """
-<TEI.2>
-  
-  <teiHeader status="new" type="text">
-  
-  <fileDesc>
-  
-  <titleStmt>
-  <title>Spuria</title>
-  <author>Plato</author>
-  <sponsor>Lexeis Project, Cornell University</sponsor>
-  		<principal>Jeffrey Rusten</principal>
-  		<respStmt>
-  		<resp>Prepared under the supervision of</resp>
-  		<name>Ethan Della Rocca</name>
-  		<name>Ayan Kohli</name>
-  		</respStmt>
-  <funder n="org:Cornell">Cornell University</funder>
-  </titleStmt>
-  
-  <extent>About 78Kb</extent>
-  
-  <publicationStmt>
-  		<publisher>Cornell University</publisher>
-  		<pubPlace>Ithaca, NY</pubPlace>
-  		<authority>Lexeis Project</authority>
-  		<availability status="free">
-   
-<p>This text may be freely distributed, subject to the following
-   restrictions:</p>
-   <list>
-  	<item>You credit Lexeis, as follows, whenever you use the document:
-  	 <quote>Text provided by Lexeis Project, with funding from Cornell University. Original version available for viewing and download at http://www.poesialatina.it/_ns/greek/testi/Plato/Spuria.html.</quote>
-  	</item>
-  	<item>You leave this availability statement intact.</item>
-  	<item>You use it for non-commercial purposes only.</item>
-  	<item>You offer Lexeis any modifications you make.</item>
-   </list>
-  </availability>
-  </publicationStmt>
-  
-  <notesStmt><headnote>Text was scanned ???.</headnote></notesStmt>
-  <sourceDesc default="NO">
-  <biblStruct default="NO">
-  	<monogr>
-  		<author>Plato</author><title>Spuria</title>
-  	
-  		<imprint><publisher>????</publisher><date>????</date></imprint>
-  	</monogr>
-  </biblStruct>
-  </sourceDesc>
-  
-  
-  </fileDesc>
-  
-  <encodingDesc>
-  
-  <refsDecl doctype="TEI.2">
-  <state unit="section" />
-  </refsDecl>
+def create_xml_string(text_name):
+    xml_string = f"""
+    <TEI.2>
+    
+    <teiHeader status="new" type="text">
+    
+    <fileDesc>
+    
+    <titleStmt>
+    <title>{text_name}</title>
+    <author>Plato</author>
+    <sponsor>Lexeis Project, Cornell University</sponsor>
+            <principal>Jeffrey Rusten</principal>
+            <respStmt>
+            <resp>Prepared under the supervision of</resp>
+            <name>Ethan Della Rocca</name>
+            <name>Ayan Kohli</name>
+            </respStmt>
+    <funder n="org:Cornell">Cornell University</funder>
+    </titleStmt>
+    
+    <extent>About 78Kb</extent>
+    
+    <publicationStmt>
+            <publisher>Cornell University</publisher>
+            <pubPlace>Ithaca, NY</pubPlace>
+            <authority>Lexeis Project</authority>
+            <availability status="free">
+    
+    <p>This text may be freely distributed, subject to the following
+    restrictions:</p>
+    <list>
+        <item>You credit Lexeis, as follows, whenever you use the document:
+        <quote>Text provided by Lexeis Project, with funding from Cornell University. Original version available for viewing and download at http://www.poesialatina.it/_ns/greek/testi/Plato/Spuria.html.</quote>
+        </item>
+        <item>You leave this availability statement intact.</item>
+        <item>You use it for non-commercial purposes only.</item>
+        <item>You offer Lexeis any modifications you make.</item>
+    </list>
+    </availability>
+    </publicationStmt>
+    
+    <notesStmt><headnote>Text was scanned ???.</headnote></notesStmt>
+    <sourceDesc default="NO">
+    <biblStruct default="NO">
+        <monogr>
+            <author>Plato</author><title>{text_name}</title>
+        
+            <imprint><publisher>????</publisher><date>????</date></imprint>
+        </monogr>
+    </biblStruct>
+    </sourceDesc>
+    
+    
+    </fileDesc>
+    
+    <encodingDesc>
+    
+    <refsDecl doctype="TEI.2">
+    <state unit="section" />
+    </refsDecl>
 
-  </encodingDesc>
-  
-  <profileDesc>
-  <langUsage default="NO">
-  <language id="greek">Greek</language>
-  </langUsage>
-  <textClass>
-	<keywords scheme="genre">
-		<term>prose</term>
-	</keywords>
-</textClass>
-</profileDesc>
-  <revisionDesc>
-  <change>
-  <date>July, 1992</date><respStmt><name>WPM</name><resp>(n/a)</resp></respStmt><item>Tagged in conformance with Prose.e dtd.</item>
-  </change>
-  
-  </revisionDesc>
-  
-  </teiHeader>
-  
- <text n="Spuria">   
-<body>   
-<div1>
+    </encodingDesc>
+    
+    <profileDesc>
+    <langUsage default="NO">
+    <language id="greek">Greek</language>
+    </langUsage>
+    <textClass>
+        <keywords scheme="genre">
+            <term>prose</term>
+        </keywords>
+    </textClass>
+    </profileDesc>
+    <revisionDesc>
+    <change>
+    <date>July, 1992</date><respStmt><name>WPM</name><resp>(n/a)</resp></respStmt><item>Tagged in conformance with Prose.e dtd.</item>
+    </change>
+    
+    </revisionDesc>
+    
+    </teiHeader>
+    
+    <text n="{text_name}">   
+    <body>   
+    <div1>
 
-"""
+    """
+    
+    return xml_string
 
 ID = 4339718
 PAGE = 0
@@ -176,6 +190,14 @@ def speaker_case3(curr_token, next_token, subsequent_token):
         return next_token + subsequent_token, 3
     return None, 0 
 
+def string_to_xml_file(xml_string, f):
+        try:
+            root = ElementTree.fromstring(xml_string)
+            tree = ElementTree.ElementTree(root)
+            tree.write(f, encoding="utf-8", xml_declaration=True)
+        except ElementTree.ParseError as e:
+            print(f"Error parsing XML string: {e}")
+
 SPEAKER_CASES = {
     "ΠΕΡΙ ΔΙΚΑΙΟΥ ΣΩΚΡΑΤΗΣ ΑΝΩΝΨΜΟΣ ΤΙΣ": 2,
     "ΠΕΡΙ ΑΡΕΤΗΣ ΣΩΚΡΑΤΗΣ ΙΠΠΟΤΡΟΦΟΣ": 2,
@@ -188,7 +210,13 @@ SPEAKER_CASES = {
 speaker_case = 0
 current_speaker = None
 
-for sec in splitted_sections:
+for j in range(len(eng_headers)):
+    current_speaker = None
+    xml_string = create_xml_string(eng_headers[j])
+    sec = splitted_sections[j]
+    sec_header = headers[j]
+    sec.insert(0, sec_header)
+    speaker_case = SPEAKER_CASES[sec_header]
     i = 0
     speaker_started_new_sec = False
 
@@ -268,25 +296,16 @@ for sec in splitted_sections:
                 ID += 1
         i += 1   
 
-if current_speaker:
-    xml_string += "\n</p></sp>\n"
+    if current_speaker:
+        xml_string += "\n</p></sp>\n"
 
-xml_string += """
-</div1>
-</body>
-</text>
-</TEI.2>   
-"""
+    xml_string += """
+    </div1>
+    </body>
+    </text>
+    </TEI.2>   
+    """
 
-with open("xml_test.xml", "w") as f:
-    f.write(xml_string)
-
-def string_to_xml_file(xml_string, f):
-    try:
-        root = ElementTree.fromstring(xml_string)
-        tree = ElementTree.ElementTree(root)
-        tree.write(f, encoding="utf-8", xml_declaration=True)
-    except ElementTree.ParseError as e:
-        print(f"Error parsing XML string: {e}")
-
-string_to_xml_file(xml_string, "xml_tagger/PlatoSpuria.xml")
+    file_name = "/Users/ayan/Desktop/Lexeis-Aristophanes/utilities/plato/input/texts/Plato" + eng_headers[j] + "Gr.xml"
+    string_to_xml_file(xml_string, file_name)
+    

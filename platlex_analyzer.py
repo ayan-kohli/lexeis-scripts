@@ -4,6 +4,8 @@ import unicodedata
 from cltk.lemmatize.grc import GreekBackoffLemmatizer
 from cltk.alphabet.text_normalization import cltk_normalize
 from time import time
+from cltk.stops.grc import STOPS as stops_list
+import pickle 
 
 import sys, os
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -156,10 +158,36 @@ def check_ensemble(token, db_lemma):
     return out
             
 def get_tokens():
-    regex_pattern = '[0-9]'
-    cursor.execute(f'SELECT token_index, lemma FROM instance_information WHERE lemma NOT REGEXP "{regex_pattern}"')
-    token_ids = cursor.fetchall()
-    return [id for id in token_ids]
+    CACHE_FILE = "platlex_query_cache.pkl"
+
+    if os.path.exists(CACHE_FILE):
+        print(f"Found cache file '{CACHE_FILE}'. Loading data directly...")
+        with open(CACHE_FILE, 'rb') as f:
+            tokens = pickle.load(f)
+        print("Data loaded from cache.")
+    else:
+        print("No cache file found. Running database query...")
+        stops_tuple = tuple(stops_list)
+        query = f"""
+        SELECT
+            I.token_index,
+            I.lemma,
+            T.token
+        FROM instance_information AS I
+        JOIN text_storage AS T ON I.token_index = T.token_index
+        WHERE 
+            I.lemma NOT REGEXP '[0-9]'
+            AND T.token NOT IN {stops_tuple};
+        """
+        cursor.execute(query)
+        tokens = cursor.fetchall()
+        
+        print("Query finished. Saving results to cache file for future runs...")
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(tokens, f)
+        print(f"Results saved to '{CACHE_FILE}'.")
+
+    return tokens
 
 def id_to_token(id):
     cursor.execute(f'SELECT token FROM text_storage WHERE token_index={id}')
@@ -215,11 +243,10 @@ def lemmatizer_eval(tokens, lemmatizer_type):
     ops = 0
     time_spent = 0
     
-    for (idx, lemma) in tokens:
+    for (idx, lemma, token) in tokens:
         begin = time()
         random_prob = random.random()
         
-        token = id_to_token(idx)
         if lemmatizer_type == "Ensemble":
             res = check_ensemble(token, lemma)
             np_total = 0
@@ -308,3 +335,4 @@ if __name__ == "__main__":
     
     connection.close()
     morph_connect.close()
+
