@@ -24,15 +24,8 @@ def normalize_for_cltk_input(text: str) -> str:
     text = text.replace("‘", CLTK_APOSTROPHE)  
     return cltk_normalize(text)
 
-def normalize_for_comparison(text: str) -> str:
-    if text is None:
-        return None
-    
-    text = text.replace("ʼ", "'")
-    text = text.replace("’", "'")
-    text = text.replace("`", "'")
-    text = text.replace("‘", "'")
-    text = text.replace("ϑ", "θ")
+def normalize_for_morph(text):
+    text = text.replace("'", "ʼ")
     
     oxia_to_tonos = {
         'ά': 'ά',  
@@ -53,12 +46,29 @@ def normalize_for_comparison(text: str) -> str:
     for oxia, tonos in oxia_to_tonos.items():
         text = text.replace(oxia, tonos)
     
-    return unicodedata.normalize('NFC', text).lower().strip()
+    return unicodedata.normalize('NFC', text).strip()
+    
 
+def normalize_for_comparison(text: str) -> str:
+    if text is None:
+        return None
+    
+    text = text.replace("ʼ", "'")
+    text = text.replace("’", "'")
+    text = text.replace("`", "'")
+    text = text.replace("‘", "'")
+    text = text.replace("ϑ", "θ")
+    
+    return text
+
+# TODO: some of these no parses are genuinely not in the current Morpheus database. However, if we WEBSCRAPE from https://anastrophe.uchicago.edu/morpheus?word=%CF%86%CE%AC%CE%B3%CE%BF%CF%82, 
+# a lemma seems to ALWAYS be returned. Is that a better method than consulting this database for as much accuracy as possible?
+# the database just has Plato
+# spreadsheet has "Spuria only" lemmas, produce a count of how many tokens that appear in the text file sent by Prof Rusten are also NOT parsed
 def morpheus_lemmatizer(token):  
     query = "SELECT lemma FROM Lexicon WHERE token = ?"
-    token = normalize_for_comparison(token)
-    morph_cur.execute(query, (token,))
+    norm_token = normalize_for_morph(token)
+    morph_cur.execute(query, (norm_token,))
     lemmas = morph_cur.fetchall()
     lemmata = []
     for lemma in lemmas:
@@ -97,33 +107,34 @@ The difference is in teh parse probabilities, which DOES NOT matter
 So its just 1 for that lemma b/c we don't care what the actual parses are
 """
 
-old_morph_multiple_lemmas = 0
-def old_morpheus_lemmatizer(token):
-    global uni_multiple_lemmas, old_morph_multiple_lemmas, morph_multiple_lemmas, unigram_prob_not_one, uni_thuc_disagreements, fallback_to_old_morph, fallback_to_morph, total_tokens
+thuceurplat_db_multiple_lemmas = 0
+def thuceurplat_db_lemmatizer(token):
+    global uni_multiple_lemmas, thuceurplat_db_multiple_lemmas, morph_multiple_lemmas, unigram_prob_not_one, uni_thuc_disagreements, fallback_to_thuceurplat_db, fallback_to_morph, total_tokens
     token_query = """
     SELECT DISTINCT L.lemma, P.prob
     FROM Lexicon L JOIN parses P 
     ON L.lexid = P.lex
     WHERE L.token = ?
     """
-    token = normalize_for_comparison(token)
-    old_morph_cur.execute(token_query, (token,))
+    norm_token = normalize_for_morph(token)
+    old_morph_cur.execute(token_query, (norm_token,))
+    thuceurplat_db_out = old_morph_cur.fetchall()
     
-    if not old_morph_out:
+    if not thuceurplat_db_out:
         return None, None 
     
-    if any(prob != 1.0 for _, prob in old_morph_out):
-        old_morph_out = [(lemma, prob) for lemma, prob in old_morph_out if prob != 1.0]
-        if not old_morph_out:
+    if any(prob != 1.0 for _, prob in thuceurplat_db_out):
+        thuceurplat_db_out = [(lemma, prob) for lemma, prob in thuceurplat_db_out if prob != 1.0]
+        if not thuceurplat_db_out:
             return None, None
     
     lemma_probs = defaultdict(float)
-    for lemma, prob in old_morph_out:
+    for lemma, prob in thuceurplat_db_out:
         lemma_probs[lemma] += prob
 
     unique_lemmas = list(lemma_probs.keys())
     if len(unique_lemmas) > 1:
-        old_morph_multiple_lemmas += 1
+        thuceurplat_db_multiple_lemmas += 1
 
     total = sum(lemma_probs.values())
     normalized_probs = {}
@@ -139,7 +150,6 @@ def old_morpheus_lemmatizer(token):
     if len(winners) == 1:
         return winners[0], max_prob
     else:
-        print(winners)
         return None, None
 
 TRAIN_SENTS = open_pickle("cltk_data/grc/model/grc_models_cltk/lemmata/backoff/greek_lemmatized_sents.pickle")
@@ -151,19 +161,55 @@ def unigram_lemmatizer(token, unigram_lem):
     lemma = unigram_lem.lemmatize([token])
     return lemma[0][1]
 
+# TODO: get a count of which ones are detected by the ensemble
+# also, produce the list of no parse tokens
+def load_spuria_lemmas():
+    with open("spuria_lemmatization/spuria_only.txt", "r") as f:
+        lines = [line.rstrip() for line in f if line.rstrip() != ""]
+        return lines
+    
 uni_multiple_lemmas = 0
-old_morph_multiple_lemmas = 0
+thuceurplat_db_multiple_lemmas = 0
 morph_multiple_lemmas = 0
 unigram_prob_not_one = 0
 uni_thuc_disagreements = 0
-fallback_to_old_morph = 0
+fallback_to_thuceurplat_db = 0
 fallback_to_morph = 0
+no_parse_lemmas = 0
 total_tokens = 0
+spuria_lemma_count = 0
+morph_fallback_multiple = 0
+SPURIA_LEMMAS = load_spuria_lemmas()
+CURRENT_TEXT = None
 
+list_all_no_parse = []
 
-def ensemble_lemmatizer(token):
-    global uni_multiple_lemmas, old_morph_multiple_lemmas, morph_multiple_lemmas, unigram_prob_not_one, uni_thuc_disagreements, fallback_to_old_morph, fallback_to_morph, total_tokens
+def corrected_np_cache():
+    CACHE_FILE = "spuria_lemmatization/corrected_np.json"
     
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            cache = json.load(f)
+            return cache
+    else:
+        np_cache = {}
+        with open("spuria_lemmatization/corrected_np.csv", "r") as f:
+            for line in f:
+                lst = line.strip().split(",")
+                if lst:
+                    token, parse, parser, notes, text, page, section = lst 
+                    np_cache[f"{text}.{page}.{section}.{token}"] = parse 
+                        
+        
+        with open(CACHE_FILE, "w") as f:
+            json.dump(np_cache, f)
+        
+        return np_cache
+    
+def ensemble_lemmatizer(token, text, page, section):
+    global uni_multiple_lemmas, thuceurplat_db_multiple_lemmas, morph_multiple_lemmas, unigram_prob_not_one, uni_thuc_disagreements
+    global fallback_to_thuceurplat_db, fallback_to_morph, total_tokens, no_parse_lemmas, spuria_lemma_count, SPURIA_LEMMAS, CURRENT_TEXT, list_all_no_parse, list_ensemble_results
+        
     results = {}
     total_tokens += 1  
     
@@ -172,9 +218,14 @@ def ensemble_lemmatizer(token):
     unigram_out = unigram_lemmatizer(token, unigram_lem)
     results["unigram"] = unigram_out
     
+    manual_cache = corrected_np_cache()
+    
     if unigram_out and isinstance(unigram_out, list) and unigram_out[0]:
         lemma_dict = unigram_out[0]
         lemma_probs = list(lemma_dict.values())[0]
+        for lemma, prob in lemma_probs:
+            if lemma in SPURIA_LEMMAS:
+                spuria_lemma_count += 1
         
         lemma_probs.sort(key=lambda x: x[1], reverse=True)
         top_uni_lemma, top_prob = lemma_probs[0]
@@ -189,31 +240,66 @@ def ensemble_lemmatizer(token):
         top_uni_lemma, top_prob = None, 0.0
 
     if top_uni_lemma is None:
-        fallback_to_old_morph += 1
-        old_morph_lemma, old_morph_prob = old_morpheus_lemmatizer(token)
-        results["old_morpheus"] = (old_morph_lemma, old_morph_prob)
-        
-        if old_morph_lemma is None:
-            fallback_to_morph += 1
-            morph_lemmas = morpheus_lemmatizer(token)
-            results["morpheus"] = morph_lemmas
-        else:
-            results["morpheus"] = []
-    else:
-        old_morph_lemma, old_morph_prob = old_morpheus_lemmatizer(token)
-        results["old_morpheus"] = (old_morph_lemma, old_morph_prob)
-        morph_lemmas = morpheus_lemmatizer(token)
+        thuceurplat_db_lemma, thuceurplat_db_prob = thuceurplat_db_lemmatizer(token)
+        results["thuceurplat_db"] = (thuceurplat_db_lemma, thuceurplat_db_prob)
+        if thuceurplat_db_lemma in SPURIA_LEMMAS:
+            spuria_lemma_count += 1
+
+        morph_lemmas = list(set(morpheus_lemmatizer(token)))
         results["morpheus"] = morph_lemmas
-        
+        for lemma in morph_lemmas:
+            if lemma in SPURIA_LEMMAS:
+                spuria_lemma_count += 1
+            
+
+        if thuceurplat_db_lemma is None:
+            if morph_lemmas == []:
+                try:
+                    manual_lemma = manual_cache[f"{text}.{page}.{section}.{token}"]
+                    results["manual"] = (manual_lemma, 1.0)
+                except KeyError:         
+                    results["manual"] = None
+                    list_all_no_parse.append((token, text, page, section))
+                    no_parse_lemmas += 1
+            else:
+                results["manual"] = None
+                fallback_to_morph += 1
+        else:
+            fallback_to_thuceurplat_db += 1
+    else:
+        thuceurplat_db_lemma, thuceurplat_db_prob = thuceurplat_db_lemmatizer(token)
+        results["thuceurplat_db"] = (thuceurplat_db_lemma, thuceurplat_db_prob)
+        morph_lemmas = list(set(morpheus_lemmatizer(token)))
+        results["morpheus"] = morph_lemmas
+        results["manual"] = None
+
         top_uni_lemma = normalize_for_comparison(top_uni_lemma)
-        old_morph_lemma = normalize_for_comparison(old_morph_lemma)
-        if old_morph_lemma is not None and top_uni_lemma != old_morph_lemma:
-            if not (re.search(r'\d+$', str(old_morph_lemma))):
+        thuceurplat_db_lemma = normalize_for_comparison(thuceurplat_db_lemma)
+        if thuceurplat_db_lemma is not None and top_uni_lemma != thuceurplat_db_lemma:
+            if not (re.search(r'\d+$', str(thuceurplat_db_lemma))):
                 uni_thuc_disagreements += 1
+
     
-    if isinstance(morph_lemmas, list) and len(set(morph_lemmas)) > 1:
+    if isinstance(morph_lemmas, list) and len(morph_lemmas) > 1:
         morph_multiple_lemmas += 1
     
+    if (
+        unigram_out and isinstance(unigram_out, list) and len(unigram_out) > 0 and unigram_out[0]
+    ) or (
+        thuceurplat_db_lemma is not None
+    ) or (
+        isinstance(morph_lemmas, list) and len(morph_lemmas) > 0
+    ):
+        lemma_dict = unigram_out[0] if unigram_out and isinstance(unigram_out, list) and len(unigram_out) > 0 else {}
+        lemma_probs = list(lemma_dict.values())[0] if lemma_dict else []
+
+        list_ensemble_results.append([
+            token,
+            json.dumps(lemma_probs, ensure_ascii=False),
+            json.dumps(results["thuceurplat_db"], ensure_ascii=False),
+            json.dumps(results["morpheus"], ensure_ascii=False)
+        ])
+
     return results
 
 def top_lemma_from_results(ensemble_results):
@@ -229,17 +315,87 @@ def top_lemma_from_results(ensemble_results):
     else:
         top_lemmas["Unigram"] = (None, 0.0)
     
-    old_morph_out = ensemble_results.get("old_morpheus", (None, None))
-    top_lemmas["Old Morph"] = old_morph_out
+    thuceurplat_db_out = ensemble_results.get("thuceurplat_db", (None, None))
+    top_lemmas["ThucEurPlat"] = thuceurplat_db_out
     
     morph_out = ensemble_results.get("morpheus", (None, None))
-    top_lemmas["Morpheus"] = old_morph_out
+    top_lemmas["Morpheus"] = morph_out
+    
+    manual_lemma = ensemble_results.get("manual", (None, None))
+    top_lemmas["Manual"] = manual_lemma
     
     return top_lemmas
 
+def backoff_chain(top_lemmas):
+    global morph_fallback_multiple
+    if top_lemmas["Unigram"][0]:
+        lemma, prob = top_lemmas["Unigram"]
+        return lemma, prob, "unigram"
+    else:
+        if top_lemmas["ThucEurPlat"][0]:
+            lemma, prob = top_lemmas["ThucEurPlat"]
+            return lemma, prob, "thuceurplat"
+        else: 
+            # TODO: how to handle multiple Morpheus lemmas?
+            if top_lemmas["Morpheus"]:
+                # default: first one 
+                lemmata = top_lemmas["Morpheus"]
+                if len(lemmata) > 1:
+                    morph_fallback_multiple += 1
+                return lemmata[0], 1.0, "morpheus"
+            else:
+                if top_lemmas["Manual"]:
+                    lemma, prob = top_lemmas["Manual"]
+                    return lemma, prob, "manual"
+                else:
+                    return "unknown", 0.0
+        
+    
+
 SPURIA_TEXTS = ['Ax', 'Def', 'DeIusto', 'Dem', 'Eryx', 'DeVirt', 'Sis']
+# SPURIA_TEXTS = ['Ax']
+list_ensemble_results = []
+
+def load_lemma_into_db(token_idx, lemma, lemma_meaning="X"):
+    # loading instance information
+    conn = sqlite3.connect("/Users/ayan/Desktop/Lexeis-Aristophanes/utilities/plato/results/lexicon_database.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+    UPDATE instance_information
+    SET lemma = ?, lemma_meaning = ?
+    WHERE token_index = ?
+    """, (lemma, lemma_meaning, token_idx))
+    
+    conn.commit()
+    
+    # create new lemma if necessary
+    # TODO: this is doing nothing
+    
+    cur.execute("""
+    INSERT OR IGNORE INTO lemmata 
+    (lemma)
+    VALUES 
+    (?)
+    """, (lemma, ))
+    if cur.rowcount == 0:
+        print("Rowcount after insert:", cur.rowcount)
+    
+    conn.commit()
+    
+    # update lemmata frequencies
+    
+    cur.execute("""
+    UPDATE lemmata
+    SET frequency_all = frequency_all + 1
+    WHERE lemma = ?
+    """, (lemma, ))
+    
+    conn.commit()
 
 def lemmatizer_eval():
+    global CURRENT_TEXT, list_all_no_parse, list_ensemble_results
+    
     conn = sqlite3.connect("/Users/ayan/Desktop/Lexeis-Aristophanes/utilities/plato/results/lexicon_database.db")
     cur = conn.cursor()
     
@@ -247,7 +403,7 @@ def lemmatizer_eval():
     
     for text in SPURIA_TEXTS:
         cur.execute("""
-            SELECT token_index, token 
+            SELECT token_index, token, text, page, section
             FROM text_storage 
             WHERE text = ? AND token_index NOT IN (-1, -2)
         """, (text,))
@@ -256,7 +412,12 @@ def lemmatizer_eval():
     
     random_fallback_old = []
     random_fallback_morph = []
+    random_fallback_morph_multiple = []
     random_disagreements = []
+    # TODO: we want the ENTIRE list of stuff that isn't present in the database
+    # two files: one csv file with no parses, one csv file with everything that was lemmatized and what lemmas we got (just tokens and lemmas)
+    # for now, put them into the DB as unknown
+    no_parses = []
     total_tokens = len(full_tokens)
     
     print(f"\nBeginning evaluation...")
@@ -265,34 +426,41 @@ def lemmatizer_eval():
     ops = 0
     time_spent = 0
     
-    for token_idx, token in full_tokens:
-        if ops > 50:
-            break
-        
+    for token_idx, token, text, page, section in full_tokens:
         start_time = time()
         
-        ensemble_results = ensemble_lemmatizer(token)
+        ensemble_results = ensemble_lemmatizer(token, text, page, section)
         
-        if fallback_to_old_morph > 0 and len(random_fallback_old) < 5:
-            if random.random() < 0.01:  
-                old_morph_out = ensemble_results.get("old_morpheus", (None, None))
-                random_fallback_old.append((token, old_morph_out))
+        if fallback_to_thuceurplat_db > 0 and len(random_fallback_old) < 5 and not top_lemma_from_results(ensemble_results)["Unigram"][0]:
+            if random.random() < 0.1:  
+                thuceurplat_db_out = ensemble_results.get("thuceurplat_db", (None, None))
+                random_fallback_old.append((token, thuceurplat_db_out))
 
-        if fallback_to_morph > 0 and len(random_fallback_morph) < 5:
-            if random.random() < 0.01:
-                morph_out = ensemble_results.get("morpheus", [])
+        morph_out = ensemble_results.get("morpheus", [])
+        
+        if fallback_to_morph > 0 and len(random_fallback_morph) < 5 and not top_lemma_from_results(ensemble_results)["Unigram"][0] and not top_lemma_from_results(ensemble_results)["ThucEurPlat"][0]:
+            if random.random() < 0.1:
                 random_fallback_morph.append((token, morph_out))
+        
+        if len(morph_out) > 1 and not top_lemma_from_results(ensemble_results)["Unigram"][0] and not top_lemma_from_results(ensemble_results)["ThucEurPlat"][0]:
+            random_fallback_morph_multiple.append((token, morph_out))
+                    
 
         unigram_out = ensemble_results.get("unigram", None)
-        old_morph_out = ensemble_results.get("old_morpheus", (None, None))
-        if unigram_out and old_morph_out[0] is not None:
+        thuceurplat_db_out = ensemble_results.get("thuceurplat_db", (None, None))
+        if unigram_out and thuceurplat_db_out[0] is not None:
             unigram_lemma = unigram_out[0][list(unigram_out[0].keys())[0]][0][0]
-            if unigram_lemma != old_morph_out[0] and len(random_disagreements) < 5:
-                if random.random() < 0.1 and not (re.search(r'\d+$', str(old_morph_out[0]))):
+            if unigram_lemma != thuceurplat_db_out[0] and len(random_disagreements) < 5:
+                if random.random() < 0.1 and not (re.search(r'\d+$', str(thuceurplat_db_out[0]))):
                     random_disagreements.append(
-                        (token, f"Unigram: {unigram_lemma}", f"Old Morph: {old_morph_out[0]}")
+                        (token, f"Unigram: {unigram_lemma}", f"ThucEurPlat: {thuceurplat_db_out[0]}")
                     )
         
+        # if no_parse_lemmas > 0:
+        #     if ensemble_results.get("manual") == :
+        #         # TODO: dashes in Sisyphus are asides, right? Treat as punctuation? ids: 4348464 4348480 4348722 4348731 4349114
+        #         no_parses.append((normalize_for_morph(token), []))
+                
         ops += 1
         time_spent += (time() - start_time)
         
@@ -300,19 +468,26 @@ def lemmatizer_eval():
             avg_time = time_spent / ops
             eta = round(avg_time * (total_tokens - ops), 2)
             print(f"Evaluation currently on operation {ops} out of {total_tokens} with an estimated {eta} seconds left")
+        
+        top_lemmas = top_lemma_from_results(ensemble_results)
+        # TODO: prob isnt used right now
+        lemma = backoff_chain(top_lemmas)[0]
+        load_lemma_into_db(token_idx, lemma)
     
     total_time = round(time_spent, 2)
     print(f"\n--- Finished evaluation in {total_time} seconds. ---")
     
     print("----- METRICS SUMMARY -----")
     print(f"Total tokens processed: {total_tokens}")
-    print(f"Fallbacks to old morpheus: {fallback_to_old_morph}")
-    print(f"Fallbacks to morpheus DB: {fallback_to_morph}")
-    print(f"Unigram and old morph disagreements: {uni_thuc_disagreements}")
-    print(f"Unigram probability not 1: {unigram_prob_not_one}")
-    print(f"Unigram multiple lemmas: {uni_multiple_lemmas}")
-    print(f"Old morph multiple lemmas: {old_morph_multiple_lemmas}")
-    print(f"Morpheus multiple lemmas: {morph_multiple_lemmas}")
+    print(f"Fallbacks to ThucEurPlat from the unigram lemmatizer: {fallback_to_thuceurplat_db}")
+    print(f"Fallbacks to morpheus DB from the ThucEurPlat DB: {fallback_to_morph}")
+    print(f"Unigram and ThucEurPlat disagreements: {uni_thuc_disagreements}")
+    print(f"Unigram output contains multiple unique lemmas: {uni_multiple_lemmas}")
+    print(f"ThucEurPlat output contains multiple unique lemmas: {thuceurplat_db_multiple_lemmas}")
+    print(f"Morpheus output contains multiple unique lemmas: {morph_multiple_lemmas}")
+    print(f"Fallback to a Morpheus output with multiple unique lemmas: {morph_fallback_multiple}")
+    print(f"No parse detected by ensemble: {no_parse_lemmas}")
+    print(f"Spuria lemma count: {spuria_lemma_count}")
     
     print("\n--- RANDOM EXAMPLES ---")
     
@@ -324,15 +499,39 @@ def lemmatizer_eval():
     for ex in random_fallback_morph:
         print(ex)
     
+    print("\nFallback to Morpheus Examples for which multiple unique lemmas are produced:")
+    for ex in random_fallback_morph_multiple:
+        print(ex)
+    
     print("\nDisagreements (Unigram vs Old Morph):")
     for ex in random_disagreements:
         print(ex)
     
+    print("\n No Parse Examples:")
+    for ex in list_all_no_parse:
+        print(ex)
+        
+    # write all no parses to csv file
+    with open("spuria_lemmatization/spuria_no_parse.csv", "w") as f:
+        f.write("token,text,page,section\n")
+        for tok, text, page, section in list_all_no_parse:
+            f.write(f"{tok}, {text}, {page}, {section}\n")
+        f.close()
+    
+    # write all lemmatized to csv file
+    with open("spuria_lemmatization/spuria_token_lemmas.csv", "w", encoding="utf-8") as f:
+        f.write("token,unigram_out,thuceurplat_out,morpheus_out\n")
+        for token, unigram_out, thuceurplat_out, morph_out in list_ensemble_results:
+            f.write(f"{token},{unigram_out},{thuceurplat_out},{morph_out}\n")
+        f.close()
     conn.close()
 
 
 if __name__ == "__main__":
-    old_morpheus_lemmatizer("κατά")
-    # lemmatizer_eval()
+    lemmatizer_eval()
+    # res = ensemble_lemmatizer("testy123", None, None, None)
+    # top_lemmas = top_lemma_from_results(res)
+    # print(res)
+    # print(backoff_chain(top_lemmas))
 
 
