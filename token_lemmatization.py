@@ -205,6 +205,28 @@ def corrected_np_cache():
             json.dump(np_cache, f)
         
         return np_cache
+
+def corrected_multiple_cache():
+    CACHE_FILE = "spuria_lemmatization/corrected_multiples.json"
+    
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r") as f:
+            cache = json.load(f)
+            return cache
+    else:
+        np_cache = {}
+        with open("spuria_lemmatization/spuria_multipleparse.csv", "r") as f:
+            for line in f:
+                lst = line.strip().split(",")
+                if lst:
+                    token, lemma = lst 
+                    np_cache[token] = lemma 
+                        
+        
+        with open(CACHE_FILE, "w") as f:
+            json.dump(np_cache, f)
+        
+        return np_cache
     
 def ensemble_lemmatizer(token, text, page, section):
     global uni_multiple_lemmas, thuceurplat_db_multiple_lemmas, morph_multiple_lemmas, unigram_prob_not_one, uni_thuc_disagreements
@@ -219,6 +241,7 @@ def ensemble_lemmatizer(token, text, page, section):
     results["unigram"] = unigram_out
     
     manual_cache = corrected_np_cache()
+    multiple_cache = corrected_multiple_cache()
     
     if unigram_out and isinstance(unigram_out, list) and unigram_out[0]:
         lemma_dict = unigram_out[0]
@@ -263,6 +286,9 @@ def ensemble_lemmatizer(token, text, page, section):
                     no_parse_lemmas += 1
             else:
                 results["manual"] = None
+                if len(morph_lemmas) > 1:
+                    if token in multiple_cache:
+                        results["morpheus"] = (multiple_cache[token], 1.0)
                 fallback_to_morph += 1
         else:
             fallback_to_thuceurplat_db += 1
@@ -348,51 +374,57 @@ def backoff_chain(top_lemmas):
                     lemma, prob = top_lemmas["Manual"]
                     return lemma, prob, "manual"
                 else:
-                    return "unknown", 0.0
+                    return "unknown", 0.0, "none"
         
     
 
 SPURIA_TEXTS = ['Ax', 'Def', 'DeIusto', 'Dem', 'Eryx', 'DeVirt', 'Sis']
 # SPURIA_TEXTS = ['Ax']
 list_ensemble_results = []
+CURR_SEQ = 593456
 
-def load_lemma_into_db(token_idx, lemma, lemma_meaning="X"):
-    # loading instance information
-    conn = sqlite3.connect("/Users/ayan/Desktop/Lexeis-Aristophanes/utilities/plato/results/lexicon_database.db")
+def load_lemma_into_db(token_idx, token, text, lemma, prob, lemma_meaning="X"):
+    global CURR_SEQ
+    conn = sqlite3.connect("/Users/ayan/Desktop/Lexeis-Aristophanes/utilities/plato/input/CopyGreekMorphologyThucEurPlato.db")
     cur = conn.cursor()
 
-    cur.execute("""
-    UPDATE instance_information
-    SET lemma = ?, lemma_meaning = ?
-    WHERE token_index = ?
-    """, (lemma, lemma_meaning, token_idx))
-    
-    conn.commit()
-    
-    # create new lemma if necessary
-    # TODO: this is doing nothing
-    
-    cur.execute("""
-    INSERT OR IGNORE INTO lemmata 
-    (lemma)
-    VALUES 
-    (?)
-    """, (lemma, ))
-    if cur.rowcount == 0:
-        print("Rowcount after insert:", cur.rowcount)
-    
-    conn.commit()
-    
-    # update lemmata frequencies
-    
-    cur.execute("""
-    UPDATE lemmata
-    SET frequency_all = frequency_all + 1
-    WHERE lemma = ?
-    """, (lemma, ))
-    
-    conn.commit()
+    # insert into tokens if not already present
+    cur.execute("SELECT tokenid FROM tokens WHERE tokenid = ?", (token_idx,))
+    if not cur.fetchone():
+        cur.execute("""
+            INSERT INTO tokens (tokenid, content, seq, type, file)
+            VALUES (?, ?, ?, ?, ?)""", (token_idx, token, CURR_SEQ, "undetermined", f"Plato{text}Gr.xml"))
+        # TODO: correct way to handle seq: starts at 1 for the first token in the text, and increments by 1 for each token
+        # TODO: handling type
+        CURR_SEQ += 1
+        
+    # insert into Lexicon table if not already present
+    cur.execute("SELECT lexid FROM Lexicon WHERE token = ? AND lemma = ?", (token, lemma))
+    row = cur.fetchone()
+    if row:
+        # TODO: lemma matches but the token isnt the same as db
+        lexid = row[0]
+    else:
+        cur.execute("INSERT INTO Lexicon (token, lemma, blesslemma, blesslex) VALUES (?, ?, 0, 0)", (token, lemma))
+        # could bless later if needed
+        lexid = cur.lastrowid
 
+    # insert into parses table
+    cur.execute("INSERT INTO parses (tokenid, lex, prob) VALUES (?, ?, ?)", (token_idx, lexid, prob))
+
+    # update frequencies
+    cur.execute("SELECT count FROM frequencies WHERE lemma = ?", (lemma,))
+    freq = cur.fetchone()
+    if freq:
+        cur.execute("UPDATE frequencies SET count = count + 1 WHERE lemma = ?", (lemma,))
+    else:
+        cur.execute("INSERT INTO frequencies (lemma, rank, count, rate, lookupform) VALUES (?, ?, ?, ?, ?)", 
+                    (lemma, -1, 1, -1.0, lemma))
+        # leave rank/rate -1 for now
+
+    #commit changes
+    conn.commit()
+    
 def lemmatizer_eval():
     global CURRENT_TEXT, list_all_no_parse, list_ensemble_results
     
@@ -442,8 +474,8 @@ def lemmatizer_eval():
             if random.random() < 0.1:
                 random_fallback_morph.append((token, morph_out))
         
-        if len(morph_out) > 1 and not top_lemma_from_results(ensemble_results)["Unigram"][0] and not top_lemma_from_results(ensemble_results)["ThucEurPlat"][0]:
-            random_fallback_morph_multiple.append((token, morph_out))
+        # if len(morph_out) > 1 and not top_lemma_from_results(ensemble_results)["Unigram"][0] and not top_lemma_from_results(ensemble_results)["ThucEurPlat"][0]:
+        #     random_fallback_morph_multiple.append((token, morph_out))
                     
 
         unigram_out = ensemble_results.get("unigram", None)
@@ -471,8 +503,8 @@ def lemmatizer_eval():
         
         top_lemmas = top_lemma_from_results(ensemble_results)
         # TODO: prob isnt used right now
-        lemma = backoff_chain(top_lemmas)[0]
-        load_lemma_into_db(token_idx, lemma)
+        lemma, prob, source = backoff_chain(top_lemmas)
+        load_lemma_into_db(token_idx, token, text, lemma, prob)
     
     total_time = round(time_spent, 2)
     print(f"\n--- Finished evaluation in {total_time} seconds. ---")
@@ -529,7 +561,7 @@ def lemmatizer_eval():
 
 if __name__ == "__main__":
     lemmatizer_eval()
-    # res = ensemble_lemmatizer("testy123", None, None, None)
+    # res = ensemble_lemmatizer("ἀποδέω", None, None, None)
     # top_lemmas = top_lemma_from_results(res)
     # print(res)
     # print(backoff_chain(top_lemmas))
